@@ -31,13 +31,6 @@ def extract_embeddings(mac_tensor):
 
 embeds = extract_embeddings(mac_tensor)
 
-
-
-
-
-
-
-
 '''
 train a transformer with embeddings so that it is an autoregressive model
 and it predicts the next signal embedding based on the previous ones
@@ -51,29 +44,27 @@ class SequenceDataset(Dataset):
     using the first (seq_len - 1) embeddings as input and the last as target.
     """
     def __init__(self, embeddings: torch.Tensor, window_size: int = 30):
-        # embeddings: (num_samples, embed_dim)
         self.embeds = embeddings
         self.window_size = window_size
-        # Number of windows: one per possible start index
         self.num_windows = embeddings.size(0) - window_size + 1
 
     def __len__(self):
         return self.num_windows
 
     def __getitem__(self, idx):
-        # Extract a window of `window_size` embeddings
         window = self.embeds[idx : idx + self.window_size]
-        # Input: first window_size-1 steps
-        x = window[:-1]  # shape: (window_size-1, embed_dim)
-        # Target: last step
-        y = window[-1]   # shape: (embed_dim,)
+        x = window[:-1]
+        y = window[-1]
         return x, y
 
 class PositionalEncoding(nn.Module):
     """
     Standard sine-cosine positional encoding.
     """
-    def __init__(self, d_model: int, dropout: float = 0.1, max_len: int = 5000):
+    def __init__(self, 
+                 d_model: int, 
+                 dropout: float = 0.1, 
+                 max_len: int = 5000):
         super().__init__()
         self.dropout = nn.Dropout(p=dropout)
         pe = torch.zeros(max_len, d_model)
@@ -94,8 +85,12 @@ class AutoregressiveTransformer(nn.Module):
     """
     Simple autoregressive Transformer model to predict the next embedding.
     """
-    def __init__(self, embed_dim: int = 128, nhead: int = 8, num_layers: int = 3,
-                 dim_feedforward: int = 512, dropout: float = 0.1):
+    def __init__(self, 
+                 embed_dim: int = 128, 
+                 nhead: int = 8, 
+                 num_layers: int = 3,
+                 dim_feedforward: int = 512, 
+                 dropout: float = 0.1):
         super().__init__()
         self.positional_encoding = PositionalEncoding(embed_dim, dropout)
         encoder_layer = nn.TransformerEncoderLayer(
@@ -108,12 +103,10 @@ class AutoregressiveTransformer(nn.Module):
         self.fc_out = nn.Linear(embed_dim, embed_dim)
 
     def forward(self, src: torch.Tensor):
-        # src: (batch_size, seq_len, embed_dim)
-        # Here seq_len == window_size - 1
-        src = src.transpose(0, 1)       # (seq_len, batch, embed_dim)
+        src = src.transpose(0, 1)
         src = self.positional_encoding(src)
         encoded = self.transformer_encoder(src)
-        last = encoded[-1]             # take last time-step: (batch, embed_dim)
+        last = encoded[-1] 
         return self.fc_out(last)
 
 

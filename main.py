@@ -47,93 +47,84 @@ and it predicts the next signal embedding based on the previous ones
 
 class SequenceDataset(Dataset):
     """
-    Dataset that divides the embeddings into windows of fixed length (e.g., 30)
+    Dataset that generates sliding windows of fixed length (e.g., 30),
+    using the first (seq_len - 1) embeddings as input and the last as target.
     """
-    def __init__(self, embeddings: torch.Tensor, seq_len: int = 30):
+    def __init__(self, embeddings: torch.Tensor, window_size: int = 30):
+        # embeddings: (num_samples, embed_dim)
         self.embeds = embeddings
-        self.seq_len = seq_len
-        self.num_windows = embeddings.size(0) // seq_len
+        self.window_size = window_size
+        # Number of windows: one per possible start index
+        self.num_windows = embeddings.size(0) - window_size + 1
 
     def __len__(self):
-        return self.num_windows - 1  # last window used as target
-        #if you shuffle the windows then its better and you don't have to change this
+        return self.num_windows
 
     def __getitem__(self, idx):
-        start = idx * self.seq_len
-        x = self.embeds[start : start + self.seq_len]
-        y = self.embeds[start + self.seq_len : start + 2 * self.seq_len]
+        # Extract a window of `window_size` embeddings
+        window = self.embeds[idx : idx + self.window_size]
+        # Input: first window_size-1 steps
+        x = window[:-1]  # shape: (window_size-1, embed_dim)
+        # Target: last step
+        y = window[-1]   # shape: (embed_dim,)
         return x, y
-
 
 class PositionalEncoding(nn.Module):
     """
     Standard sine-cosine positional encoding.
     """
-    def __init__(self, 
-                 d_model: int, 
-                 dropout: float = 0.1, 
-                 max_len: int = 5000):
+    def __init__(self, d_model: int, dropout: float = 0.1, max_len: int = 5000):
         super().__init__()
         self.dropout = nn.Dropout(p=dropout)
-
         pe = torch.zeros(max_len, d_model)
         position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
-        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-torch.log(torch.tensor(10000.0)) / d_model))
+        div_term = torch.exp(
+            torch.arange(0, d_model, 2).float() * (-torch.log(torch.tensor(10000.0)) / d_model)
+        )
         pe[:, 0::2] = torch.sin(position * div_term)
         pe[:, 1::2] = torch.cos(position * div_term)
         pe = pe.unsqueeze(1)
         self.register_buffer('pe', pe)
 
     def forward(self, x: torch.Tensor):
-        x = x + self.pe[: x.size(0)] # x: (seq_len, batch_size, d_model) 
+        x = x + self.pe[: x.size(0)]
         return self.dropout(x)
-
-
 
 class AutoregressiveTransformer(nn.Module):
     """
-    Simple autoregressive Transformer model to predict next embedding.
+    Simple autoregressive Transformer model to predict the next embedding.
     """
-    def __init__(self, 
-                 embed_dim: int = 128, 
-                 nhead: int = 8, 
-                 num_layers: int = 3, 
-                 dim_feedforward: int = 512, 
-                 dropout: float = 0.1):
+    def __init__(self, embed_dim: int = 128, nhead: int = 8, num_layers: int = 3,
+                 dim_feedforward: int = 512, dropout: float = 0.1):
         super().__init__()
         self.positional_encoding = PositionalEncoding(embed_dim, dropout)
-        encoder_layers = nn.TransformerEncoderLayer(
+        encoder_layer = nn.TransformerEncoderLayer(
             d_model=embed_dim,
             nhead=nhead,
             dim_feedforward=dim_feedforward,
             dropout=dropout
         )
-        self.transformer_encoder = nn.TransformerEncoder(encoder_layers, num_layers)
+        self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers)
         self.fc_out = nn.Linear(embed_dim, embed_dim)
 
     def forward(self, src: torch.Tensor):
-        """
-        src: (batch_size, seq_len, embed_dim)
-        returns: (batch_size, embed_dim)
-        """
-        # Transformer expects seq_len first: (seq_len, batch_size, embed_dim)
-        src = src.transpose(0, 1)
+        # src: (batch_size, seq_len, embed_dim)
+        # Here seq_len == window_size - 1
+        src = src.transpose(0, 1)       # (seq_len, batch, embed_dim)
         src = self.positional_encoding(src)
         encoded = self.transformer_encoder(src)
-        # Take last time step for prediction
-        last = encoded[-1]  # (batch_size, embed_dim)
-        out = self.fc_out(last)
-        return out
+        last = encoded[-1]             # take last time-step: (batch, embed_dim)
+        return self.fc_out(last)
 
-# Example training loop
+
 if __name__ == "__main__":
-    # Assuming `embeds` and `ts_tensor` are loaded as in your code
-    seq_len = 10
+    window_size = 30
+    seq_len = window_size - 1
     batch_size = 32
     lr = 1e-4
-    epochs = 20
+    epochs = 100
 
-    dataset = SequenceDataset(embeds, seq_len)
+    dataset = SequenceDataset(embeds, window_size)
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
     model = AutoregressiveTransformer(embed_dim=embeds.size(1))
@@ -146,10 +137,7 @@ if __name__ == "__main__":
         for x_batch, y_batch in loader:
             optimizer.zero_grad()
             preds = model(x_batch)
-            # In case y_batch has extra seq dimension, reduce to single-step
-            if y_batch.dim() == 3:
-                # y_batch shape: (batch_size, seq_len, embed_dim) -> take first step
-                y_batch = y_batch[:, 0, :]
+            # y_batch shape: (batch, embed_dim)
             loss = criterion(preds, y_batch)
             loss.backward()
             optimizer.step()
@@ -157,8 +145,6 @@ if __name__ == "__main__":
         avg_loss = total_loss / len(dataset)
         print(f"Epoch {epoch:02d}, Loss: {avg_loss:.4f}")
 
-
-    # Save model
     torch.save(model.state_dict(), "autoregressive_transformer.pth")
 
 

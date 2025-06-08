@@ -6,6 +6,7 @@ import numpy as np
 from sklearn.decomposition import PCA
 from torch.utils.data import Dataset, DataLoader
 import torch.optim as optim
+import matplotlib.pyplot as plt
 
 csv_path = 'datasets/SODIndoorLoc-main/SYL/Training_SYL_All_30.csv'
 df = pd.read_csv(csv_path)
@@ -110,12 +111,125 @@ class AutoregressiveTransformer(nn.Module):
         return self.fc_out(last)
 
 
+def model_trainer(
+    model: torch.nn.Module,
+    train_loader: torch.utils.data.DataLoader,
+    optimizer: torch.optim.Optimizer,
+    criterion: torch.nn.Module,
+    epochs: int = 200,
+    test_loader: torch.utils.data.DataLoader = None,
+    device: torch.device = None,
+    training: bool = True
+):
+    """
+    Trains `model` on `train_loader` and evaluates on `test_loader` after every epoch if provided.
+
+    Returns:
+        train_losses: List of average training loss per epoch.
+        test_losses:  List of average test loss per epoch (empty if no test_loader).
+    """
+    if device is None:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model.to(device)
+
+    train_losses = []
+    test_losses = []
+
+    if training:
+        print("Starting training...")
+        for epoch in range(1, epochs + 1):
+            model.train()
+            total_train_loss = 0.0
+            n_samples = 0
+
+            for x_batch, y_batch in train_loader:
+                x_batch = x_batch.to(device)
+                y_batch = y_batch.to(device)
+
+                optimizer.zero_grad()
+                preds = model(x_batch)
+                loss = criterion(preds, y_batch)
+                loss.backward()
+                optimizer.step()
+
+                batch_size = x_batch.size(0)
+                total_train_loss += loss.item() * batch_size
+                n_samples += batch_size
+                #train_loss = loss.item() * batch_size
+                #train_losses.append(train_loss)
+
+            avg_train_loss = total_train_loss / n_samples
+            train_losses.append(avg_train_loss)
+
+            # Evaluate test loss during training
+            if test_loader is not None:
+                model.eval()
+                total_test_loss = 0.0
+                n_test_samples = 0
+                with torch.no_grad():
+                    for x_batch, y_batch in test_loader:
+                        x_batch = x_batch.to(device)
+                        y_batch = y_batch.to(device)
+
+                        preds = model(x_batch)
+                        loss = criterion(preds, y_batch)
+
+                        batch_size = x_batch.size(0)
+                        total_test_loss += loss.item() * batch_size
+                        n_test_samples += batch_size
+                        #test_loss = loss.item() * batch_size
+                        #test_losses.append(test_loss)
+
+                avg_test_loss = total_test_loss / n_test_samples
+                test_losses.append(avg_test_loss)
+                print(f"Epoch {epoch:02d}/{epochs}, Train Loss: {avg_train_loss:.4f}, Test Loss: {avg_test_loss:.4f}")
+            else:
+                print(f"Epoch {epoch:02d}/{epochs}, Train Loss: {avg_train_loss:.4f}")
+    else:
+        print("Skipping training...")
+        model.load_state_dict(torch.load("autoregressive_transformer.pth"))
+        # Optional test loss evaluation after loading
+        if test_loader is not None:
+            model.eval()
+            total_test_loss = 0.0
+            n_test_samples = 0
+            with torch.no_grad():
+                for x_batch, y_batch in test_loader:
+                    x_batch = x_batch.to(device)
+                    y_batch = y_batch.to(device)
+
+                    preds = model(x_batch)
+                    loss = criterion(preds, y_batch)
+
+                    batch_size = x_batch.size(0)
+                    total_test_loss += loss.item() * batch_size
+                    n_test_samples += batch_size
+
+            avg_test_loss = total_test_loss / n_test_samples
+            test_losses.append(avg_test_loss)
+            print(f"Test Loss: {avg_test_loss:.4f}")
+
+    return train_losses, test_losses
+
+def plot_losses(train_losses, test_losses):
+    # Plot losses after training
+    plt.figure(figsize=(10, 5))
+    plt.plot(train_losses, label='Train Loss', color='red')
+    plt.plot(test_losses, label='Test Loss', color='blue')
+    plt.xlabel("Epoch")
+    plt.ylabel("Loss")
+    plt.title("Training vs Test Loss")
+    plt.legend()
+    plt.grid(True)
+    plt.savefig("losses.png")
+    plt.show()
+
 if __name__ == "__main__":
     window_size = 30
     seq_len = window_size - 1
     batch_size = 32
     lr = 1e-4
-    epochs = 100
+    epochs = 200
 
     dataset = SequenceDataset(embeds, window_size)
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
@@ -124,28 +238,31 @@ if __name__ == "__main__":
     optimizer = optim.Adam(model.parameters(), lr=lr)
     criterion = nn.MSELoss()
 
-    model.train()
-    for epoch in range(1, epochs + 1):
-        total_loss = 0.0
-        for x_batch, y_batch in loader:
-            optimizer.zero_grad()
-            preds = model(x_batch)
-            # y_batch shape: (batch, embed_dim)
-            loss = criterion(preds, y_batch)
-            loss.backward()
-            optimizer.step()
-            total_loss += loss.item() * x_batch.size(0)
-        avg_loss = total_loss / len(dataset)
-        print(f"Epoch {epoch:02d}, Loss: {avg_loss:.4f}")
+    df_test = pd.read_csv('datasets/SODIndoorLoc-main/SYL/Testing_SYL_All.csv')
+    mac_tensor_test, ts_tensor_test = extract_mac_and_sample_time(df_test)
+    embeds_test = extract_embeddings(mac_tensor_test)
 
-    torch.save(model.state_dict(), "autoregressive_transformer.pth")
+    dataset_test = SequenceDataset(embeds_test, window_size=10)
+    loader_test = DataLoader(dataset_test, batch_size=batch_size, shuffle=False)
+
+    train_losses, test_losses = model_trainer(
+        model=model,
+        train_loader=loader,
+        optimizer=optimizer,
+        criterion=criterion,
+        epochs=epochs,
+        test_loader=loader_test,
+        training=True
+    )
+    print("Evaluation complete.")
+
+    plot_losses(train_losses, test_losses)
+
+    print('done')
 
 
 
-
-
-
-# divide the data so that you know wchic comes first and which comes second using the timestamp attribute
+# divide the data so that you know which comes first and which comes second using the timestamp attribute
 
 # divide the data into training and test sets, remember that this is time series data, so you need to take care of the order
 
@@ -153,7 +270,7 @@ if __name__ == "__main__":
 
 # create the embeddings using the convolutional block defined above
 
-#use convolutional block to learn the embeddings
+# use convolutional block to learn the embeddings
 
 '''
 TO DO:

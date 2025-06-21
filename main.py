@@ -243,6 +243,17 @@ def predict_next_signal(model: torch.nn.Module, input_sequence: torch.Tensor, de
         prediction = model(input_sequence.unsqueeze(0))  # Add batch dimension
     return prediction.squeeze(0).cpu()  # Remove batch dimension and move to CPU
 
+def calculate_nmse(actual: torch.Tensor, predicted: torch.Tensor):
+    """
+    Calculates the Normalized Mean Squared Error (NMSE).
+    """
+    mse = F.mse_loss(predicted, actual, reduction='sum')
+    actual_power = torch.sum(actual**2)
+    if actual_power == 0:
+        return float('inf') # Avoid division by zero
+    nmse = mse / actual_power
+    return nmse.item()
+
 def main():
 
     window_size = 30
@@ -297,7 +308,7 @@ def main():
         criterion=criterion,
         epochs=epochs,
         test_loader=loader_test,
-        training=False,
+        training=True,
         checkpoint_dir=checkpoint_dir,
         device=device
     )
@@ -307,24 +318,29 @@ def main():
 
     # Predict the next signal
     # Get one sample from the test dataset for prediction
-    sample_input_sequence, actual_next_signal = dataset_test[0] # Take the first sample
-    
-    # Ensure the sample input sequence has the correct shape for the model (seq_len, embed_dim)
-    # The dataset returns x as (split_size - 1, embed_dim)
-    
-    predicted_next_signal = predict_next_signal(model, sample_input_sequence, device)
+    for i in range(100):
+        sample_input_sequence, actual_next_signal = dataset_test[i] # Take the first sample
+        
+        # Ensure the sample input sequence has the correct shape for the model (seq_len, embed_dim)
+        # The dataset returns x as (split_size - 1, embed_dim)
+        
+        predicted_next_signal = predict_next_signal(model, sample_input_sequence, device)
 
-    print("\n--- Prediction ---")
-    print(f"Sample Input Sequence Shape: {sample_input_sequence.shape}")
-    print(f"Actual Next Signal Shape: {actual_next_signal.shape}")
-    print(f"Predicted Next Signal Shape: {predicted_next_signal.shape}")
-    # You might want to print a comparison or calculate a metric for the prediction
-    print(f"Actual Next Signal (first 5 elements): {actual_next_signal[:5]}")
-    print(f"Predicted Next Signal (first 5 elements): {predicted_next_signal[:5]}")
-    
-    # Calculate Mean Squared Error for the single prediction
-    prediction_mse = F.mse_loss(predicted_next_signal, actual_next_signal)
-    print(f"Prediction MSE: {prediction_mse.item():.4f}")
+        print("\n--- Prediction ---")
+        print(f"Sample Input Sequence Shape: {sample_input_sequence.shape}")
+        print(f"Actual Next Signal Shape: {actual_next_signal.shape}")
+        print(f"Predicted Next Signal Shape: {predicted_next_signal.shape}")
+        # You might want to print a comparison or calculate a metric for the prediction
+        print(f"Actual Next Signal (first 5 elements): {actual_next_signal[:5]}")
+        print(f"Predicted Next Signal (first 5 elements): {predicted_next_signal[:5]}")
+        
+        # Calculate Mean Squared Error for the single prediction
+        prediction_mse = F.mse_loss(predicted_next_signal, actual_next_signal)
+        print(f"Prediction MSE: {prediction_mse.item():.4f}")
+
+        # Calculate Normalized Mean Squared Error (NMSE)
+        prediction_nmse = calculate_nmse(actual_next_signal, predicted_next_signal)
+        print(f"Prediction NMSE: {prediction_nmse:.4f}")
 
     print('done')
 

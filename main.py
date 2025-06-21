@@ -12,17 +12,15 @@ import os
 '--------------------------------------pre-processing----------------------------------'
 def signals_extractor(df):
     columns = df.columns[:-1]
-    #mac_columns = [col for col in df.columns if "MAC" in col]
     vectors = df[columns].values
     sample_times = df['SampleTimes'].values
-
     signals_tensor = torch.tensor(vectors, dtype=torch.float32)
     ts_tensor = torch.tensor(sample_times, dtype=torch.float32).squeeze()
     return signals_tensor, ts_tensor
 
 def embeddings_extractor(signals_tensor):
     """
-    Extract embeddings from the MAC address tensor using PCA.
+    Extract embeddings from the signals tensor using PCA.
     """
     pca = PCA(n_components=370)
     signals_tensor = pca.fit_transform(signals_tensor)
@@ -83,7 +81,7 @@ class PositionalEncoding(nn.Module):
 
 class AutoregressiveTransformer(nn.Module):
     """
-    Simple autoregressive Transformer model to predict the next embedding.
+    Autoregressive Transformer model to predict the next embedding.
     """
     def __init__(self, 
                  embed_dim: int = 256, 
@@ -220,7 +218,6 @@ def model_trainer(
 
 '--------------------------------------plotting---------------------------------------'
 def plot_losses(train_losses, test_losses):
-    # Plot losses after training
     plt.figure(figsize=(10, 5))
     plt.plot(train_losses, label='Train Loss', color='red')
     plt.plot(test_losses, label='Test Loss', color='blue')
@@ -237,11 +234,11 @@ def predict_next_signal(model: torch.nn.Module, input_sequence: torch.Tensor, de
     """
     Predicts the next signal given an input sequence using the trained model.
     """
-    model.eval()  # Set the model to evaluation mode
-    with torch.no_grad():  # Disable gradient calculations
+    model.eval()
+    with torch.no_grad():
         input_sequence = input_sequence.to(device)
-        prediction = model(input_sequence.unsqueeze(0))  # Add batch dimension
-    return prediction.squeeze(0).cpu()  # Remove batch dimension and move to CPU
+        prediction = model(input_sequence.unsqueeze(0))
+    return prediction.squeeze(0).cpu()
 
 def calculate_nmse(actual: torch.Tensor, predicted: torch.Tensor):
     """
@@ -255,7 +252,6 @@ def calculate_nmse(actual: torch.Tensor, predicted: torch.Tensor):
     return nmse.item()
 
 def main():
-
     window_size = 30
     seq_len = window_size - 1
     batch_size = 32
@@ -263,86 +259,91 @@ def main():
     epochs = 6
     checkpoint_dir = "checkpoints"
 
+    train_df = pd.read_csv('datasets/SODIndoorLoc-main/SYL/Training_SYL_All_30.csv')
+    signals_tensor, train_ts_tensor = signals_extractor(train_df)
+    train_embeds = embeddings_extractor(signals_tensor)
 
-    csv_path = 'datasets/SODIndoorLoc-main/SYL/Training_SYL_All_30.csv'
-    df = pd.read_csv(csv_path)
-    mac_tensor, ts_tensor = signals_extractor(df)
-    embeds = embeddings_extractor(mac_tensor)
-
-
-    # Set the standard deviation of the noise (e.g., 0.1)
+    # adding some noise
     std_dev = 0.1
-    # Generate Gaussian noise and add it
-    noise = torch.randn_like(embeds) * std_dev
-    noisy_embedding = embeds + noise
-    combined_embeddings = torch.cat([embeds, noisy_embedding], dim=0)
-    # Optionally duplicate the timestamps if needed
-    combined_timestamps = torch.cat([ts_tensor, ts_tensor], dim=0)
-    embeds = combined_embeddings
-    ts_tensor = combined_timestamps
+    noise = torch.randn_like(train_embeds) * std_dev
+    noisy_embedding = train_embeds + noise
+    combined_embeddings = torch.cat([train_embeds, noisy_embedding], dim=0)
+    combined_timestamps = torch.cat([train_ts_tensor, train_ts_tensor], dim=0)
+    train_embeds = combined_embeddings
+    train_ts_tensor = combined_timestamps
 
+    train_dataset = SequenceDataset(train_embeds, window_size=window_size, splits=5)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
 
-
-    dataset = SequenceDataset(embeds, window_size=window_size, splits=5)
-    loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
-
-    embed_dim = embeds.size(1)
+    embed_dim = train_embeds.size(1)
     model = AutoregressiveTransformer(embed_dim=embed_dim)
     optimizer = optim.Adam(model.parameters(), lr=lr)
     criterion = nn.MSELoss()
 
     df_test = pd.read_csv('datasets/SODIndoorLoc-main/SYL/Testing_SYL_All.csv')
-    mac_tensor_test, ts_tensor_test = signals_extractor(df_test)
-    embeds_test = embeddings_extractor(mac_tensor_test)
+    mac_tensor_test, test_ts_tensor = signals_extractor(df_test)
+    test_embeds = embeddings_extractor(mac_tensor_test)
 
-    dataset_test = SequenceDataset(embeds_test, window_size=window_size, splits=3)
+    dataset_test = SequenceDataset(test_embeds, window_size=window_size, splits=3)
     loader_test = DataLoader(dataset_test, batch_size=batch_size, shuffle=False)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
+    training = False
     train_losses, test_losses = model_trainer(
         model=model,
-        train_loader=loader,
+        train_loader=train_loader,
         optimizer=optimizer,
         criterion=criterion,
         epochs=epochs,
         test_loader=loader_test,
-        training=True,
+        training=training,
         checkpoint_dir=checkpoint_dir,
         device=device
     )
     print("Training and evaluation complete.")
 
-    plot_losses(train_losses, test_losses)
+    if training:
+        plot_losses(train_losses, test_losses)
 
-    # Predict the next signal
-    # Get one sample from the test dataset for prediction
-    for i in range(100):
-        sample_input_sequence, actual_next_signal = dataset_test[i] # Take the first sample
-        
-        # Ensure the sample input sequence has the correct shape for the model (seq_len, embed_dim)
-        # The dataset returns x as (split_size - 1, embed_dim)
-        
+    print("\n--- Individual Predictions and Metrics ---")
+    all_prediction_mse = []
+    all_prediction_nmse = []
+    #num_predictions_to_evaluate = min(100, len(dataset_test))
+    num_predictions_to_evaluate = len(dataset_test)
+
+    for i in range(num_predictions_to_evaluate):
+        sample_input_sequence, actual_next_signal = dataset_test[i]
         predicted_next_signal = predict_next_signal(model, sample_input_sequence, device)
 
-        print("\n--- Prediction ---")
-        print(f"Sample Input Sequence Shape: {sample_input_sequence.shape}")
-        print(f"Actual Next Signal Shape: {actual_next_signal.shape}")
-        print(f"Predicted Next Signal Shape: {predicted_next_signal.shape}")
-        # You might want to print a comparison or calculate a metric for the prediction
-        print(f"Actual Next Signal (first 5 elements): {actual_next_signal[:5]}")
-        print(f"Predicted Next Signal (first 5 elements): {predicted_next_signal[:5]}")
-        
-        # Calculate Mean Squared Error for the single prediction
-        prediction_mse = F.mse_loss(predicted_next_signal, actual_next_signal)
-        print(f"Prediction MSE: {prediction_mse.item():.4f}")
-
-        # Calculate Normalized Mean Squared Error (NMSE)
+        # Calculate MSE and NMSE for the single prediction
+        prediction_mse = F.mse_loss(predicted_next_signal, actual_next_signal).item()
+        all_prediction_mse.append(prediction_mse)
         prediction_nmse = calculate_nmse(actual_next_signal, predicted_next_signal)
-        print(f"Prediction NMSE: {prediction_nmse:.4f}")
+        all_prediction_nmse.append(prediction_nmse)
 
-    print('done')
+        if i < 10:
+            print(f"\n--- Prediction Sample {i+1} ---")
+            print(f"Sample Input Sequence Shape: {sample_input_sequence.shape}")
+            print(f"Actual Next Signal Shape: {actual_next_signal.shape}")
+            print(f"Predicted Next Signal Shape: {predicted_next_signal.shape}")
+            print(f"Actual Next Signal (first 5 elements): {actual_next_signal[:5]}")
+            print(f"Predicted Next Signal (first 5 elements): {predicted_next_signal[:5]}")
+            print(f"Prediction MSE: {prediction_mse:.4f}")
+            print(f"Prediction NMSE: {prediction_nmse:.4f}")
+
+    average_mse = np.mean(all_prediction_mse)
+    average_nmse = np.mean([nmse for nmse in all_prediction_nmse if nmse != float('inf')])
+    
+    print("\n--- Average Metrics ---")
+    print(f"Average Prediction MSE over {num_predictions_to_evaluate} samples: {average_mse:.4f}")
+    print(f"Average Prediction NMSE over {num_predictions_to_evaluate} samples: {average_nmse:.4f}")
 
 if __name__ == "__main__":
     main()
+
+    '''
+    TO DO:
+    - Do the evaluation for different test sets
+    '''

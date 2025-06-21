@@ -7,6 +7,7 @@ from sklearn.decomposition import PCA
 from torch.utils.data import Dataset, DataLoader
 import torch.optim as optim
 import matplotlib.pyplot as plt
+import os
 
 '--------------------------------------pre-processing----------------------------------'
 def signals_extractor(df):
@@ -117,7 +118,8 @@ def model_trainer(
     epochs: int = 200,
     test_loader: torch.utils.data.DataLoader = None,
     device: torch.device = None,
-    training: bool = True
+    training: bool = True,
+    checkpoint_dir: str = None
 ):
     """
     Trains `model` on `train_loader` and evaluates on `test_loader` after every epoch if provided.
@@ -126,7 +128,7 @@ def model_trainer(
         train_losses: List of average training loss per epoch.
         test_losses:  List of average test loss per epoch (empty if no test_loader).
     """
-    if device is None:
+    if device == None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
 
@@ -183,9 +185,16 @@ def model_trainer(
                 print(f"Epoch {epoch:02d}/{epochs}, Train Loss: {avg_train_loss:.4f}, Test Loss: {avg_test_loss:.4f}")
             else:
                 print(f"Epoch {epoch:02d}/{epochs}, Train Loss: {avg_train_loss:.4f}")
+            
+            if checkpoint_dir:
+                os.makedirs(checkpoint_dir, exist_ok=True)
+                checkpoint_path = os.path.join(checkpoint_dir, f"model_epoch_{epoch:03d}.pth")
+                torch.save(model.state_dict(), checkpoint_path)
+                print(f"Checkpoint saved to {checkpoint_path}")
+
     else:
         print("Skipping training...")
-        model.load_state_dict(torch.load("autoregressive_transformer.pth"))
+        model.load_state_dict(torch.load("checkpoints/model_epoch_006.pth"))
         # Optional test loss evaluation after loading
         if test_loader is not None:
             model.eval()
@@ -223,6 +232,16 @@ def plot_losses(train_losses, test_losses):
     plt.savefig("losses.png")
     plt.show()
 
+'--------------------------------------prediction-------------------------------------'
+def predict_next_signal(model: torch.nn.Module, input_sequence: torch.Tensor, device: torch.device):
+    """
+    Predicts the next signal given an input sequence using the trained model.
+    """
+    model.eval()  # Set the model to evaluation mode
+    with torch.no_grad():  # Disable gradient calculations
+        input_sequence = input_sequence.to(device)
+        prediction = model(input_sequence.unsqueeze(0))  # Add batch dimension
+    return prediction.squeeze(0).cpu()  # Remove batch dimension and move to CPU
 
 def main():
 
@@ -231,6 +250,7 @@ def main():
     batch_size = 32
     lr = 1e-4
     epochs = 6
+    checkpoint_dir = "checkpoints"
 
 
     csv_path = 'datasets/SODIndoorLoc-main/SYL/Training_SYL_All_30.csv'
@@ -241,26 +261,22 @@ def main():
 
     # Set the standard deviation of the noise (e.g., 0.1)
     std_dev = 0.1
-
     # Generate Gaussian noise and add it
     noise = torch.randn_like(embeds) * std_dev
     noisy_embedding = embeds + noise
     combined_embeddings = torch.cat([embeds, noisy_embedding], dim=0)
-
     # Optionally duplicate the timestamps if needed
     combined_timestamps = torch.cat([ts_tensor, ts_tensor], dim=0)
-
     embeds = combined_embeddings
     ts_tensor = combined_timestamps
-
-
 
 
 
     dataset = SequenceDataset(embeds, window_size=window_size, splits=5)
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
-    model = AutoregressiveTransformer(embed_dim=embeds.size(1))
+    embed_dim = embeds.size(1)
+    model = AutoregressiveTransformer(embed_dim=embed_dim)
     optimizer = optim.Adam(model.parameters(), lr=lr)
     criterion = nn.MSELoss()
 
@@ -271,6 +287,9 @@ def main():
     dataset_test = SequenceDataset(embeds_test, window_size=window_size, splits=3)
     loader_test = DataLoader(dataset_test, batch_size=batch_size, shuffle=False)
 
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {device}")
+
     train_losses, test_losses = model_trainer(
         model=model,
         train_loader=loader,
@@ -278,11 +297,35 @@ def main():
         criterion=criterion,
         epochs=epochs,
         test_loader=loader_test,
-        training=True
+        training=False,
+        checkpoint_dir=checkpoint_dir,
+        device=device
     )
-    print("Evaluation complete.")
+    print("Training and evaluation complete.")
 
     plot_losses(train_losses, test_losses)
+
+    # Predict the next signal
+    # Get one sample from the test dataset for prediction
+    sample_input_sequence, actual_next_signal = dataset_test[0] # Take the first sample
+    
+    # Ensure the sample input sequence has the correct shape for the model (seq_len, embed_dim)
+    # The dataset returns x as (split_size - 1, embed_dim)
+    
+    predicted_next_signal = predict_next_signal(model, sample_input_sequence, device)
+
+    print("\n--- Prediction ---")
+    print(f"Sample Input Sequence Shape: {sample_input_sequence.shape}")
+    print(f"Actual Next Signal Shape: {actual_next_signal.shape}")
+    print(f"Predicted Next Signal Shape: {predicted_next_signal.shape}")
+    # You might want to print a comparison or calculate a metric for the prediction
+    print(f"Actual Next Signal (first 5 elements): {actual_next_signal[:5]}")
+    print(f"Predicted Next Signal (first 5 elements): {predicted_next_signal[:5]}")
+    
+    # Calculate Mean Squared Error for the single prediction
+    prediction_mse = F.mse_loss(predicted_next_signal, actual_next_signal)
+    print(f"Prediction MSE: {prediction_mse.item():.4f}")
+
     print('done')
 
 if __name__ == "__main__":

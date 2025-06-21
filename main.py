@@ -18,11 +18,11 @@ def signals_extractor(df):
     ts_tensor = torch.tensor(sample_times, dtype=torch.float32).squeeze()
     return signals_tensor, ts_tensor
 
-def embeddings_extractor(signals_tensor):
+def embeddings_extractor(signals_tensor, n_components):
     """
     Extract embeddings from the signals tensor using PCA.
     """
-    pca = PCA(n_components=370)
+    pca = PCA(n_components=n_components)
     signals_tensor = pca.fit_transform(signals_tensor)
     return torch.tensor(signals_tensor, dtype=torch.float32)
 
@@ -153,8 +153,6 @@ def model_trainer(
                 batch_size = x_batch.size(0)
                 total_train_loss += loss.item() * batch_size
                 n_samples += batch_size
-                #train_loss = loss.item() * batch_size
-                #train_losses.append(train_loss)
 
             avg_train_loss = total_train_loss / n_samples
             train_losses.append(avg_train_loss)
@@ -175,8 +173,6 @@ def model_trainer(
                         batch_size = x_batch.size(0)
                         total_test_loss += loss.item() * batch_size
                         n_test_samples += batch_size
-                        #test_loss = loss.item() * batch_size
-                        #test_losses.append(test_loss)
 
                 avg_test_loss = total_test_loss / n_test_samples
                 test_losses.append(avg_test_loss)
@@ -295,7 +291,7 @@ def main():
 
     train_df = pd.read_csv('datasets/SODIndoorLoc-main/SYL/Training_SYL_All_30.csv')
     signals_tensor, train_ts_tensor = signals_extractor(train_df)
-    train_embeds = embeddings_extractor(signals_tensor)
+    train_embeds = embeddings_extractor(signals_tensor, n_components=370)
 
     # adding some noise
     std_dev = 0.1
@@ -316,7 +312,15 @@ def main():
 
     df_test = pd.read_csv('datasets/SODIndoorLoc-main/SYL/Testing_SYL_All.csv')
     signals_tensor_test, test_ts_tensor = signals_extractor(df_test)
-    test_embeds = embeddings_extractor(signals_tensor_test)
+    test_embeds = embeddings_extractor(signals_tensor_test, n_components=370)
+
+    '''df_test = pd.read_csv('datasets/SODIndoorLoc-main/HCXY/Testing_HCXY_All.csv')
+    signals_tensor_test, test_ts_tensor = signals_extractor(df_test)
+    test_embeds = embeddings_extractor(signals_tensor_test, n_components=370)'''
+
+    '''df_test = pd.read_csv('datasets/SODIndoorLoc-main/SYL/Testing_SYL_AP.csv')
+    signals_tensor_test, test_ts_tensor = signals_extractor(df_test)
+    test_embeds = embeddings_extractor(signals_tensor_test, n_components=50)'''
 
     test_dataset = SequenceDataset(test_embeds, window_size=window_size, splits=3)
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
@@ -348,5 +352,6 @@ if __name__ == "__main__":
 
     '''
     TO DO:
+    - Do fine tuning to train the model with the other building data. If it is not possible retrain the model with the same architecture to check if it is general 
     - Do the evaluation for different test sets
     '''

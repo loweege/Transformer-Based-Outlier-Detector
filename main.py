@@ -8,56 +8,54 @@ from torch.utils.data import Dataset, DataLoader
 import torch.optim as optim
 import matplotlib.pyplot as plt
 
-csv_path = 'datasets/SODIndoorLoc-main/SYL/Training_SYL_All_30.csv'
-df = pd.read_csv(csv_path)
-
-def extract_mac_and_sample_time(df):
-    mac_columns = [col for col in df.columns if "MAC" in col]
-    mac_vectors = df[mac_columns].values
+'--------------------------------------pre-processing----------------------------------'
+def signals_extractor(df):
+    columns = df.columns[:-1]
+    #mac_columns = [col for col in df.columns if "MAC" in col]
+    vectors = df[columns].values
     sample_times = df['SampleTimes'].values
 
-    mac_tensor = torch.tensor(mac_vectors, dtype=torch.float32)
+    signals_tensor = torch.tensor(vectors, dtype=torch.float32)
     ts_tensor = torch.tensor(sample_times, dtype=torch.float32).squeeze()
-    return mac_tensor, ts_tensor
+    return signals_tensor, ts_tensor
 
-mac_tensor, ts_tensor = extract_mac_and_sample_time(df)
-
-def extract_embeddings(mac_tensor):
+def embeddings_extractor(signals_tensor):
     """
     Extract embeddings from the MAC address tensor using PCA.
     """
-    pca = PCA(n_components=128)
-    mac_tensor = pca.fit_transform(mac_tensor)
-    return torch.tensor(mac_tensor, dtype=torch.float32)
+    pca = PCA(n_components=370)
+    signals_tensor = pca.fit_transform(signals_tensor)
+    return torch.tensor(signals_tensor, dtype=torch.float32)
 
-embeds = extract_embeddings(mac_tensor)
-
-'''
-train a transformer with embeddings so that it is an autoregressive model
-and it predicts the next signal embedding based on the previous ones
-'''
-
-# DO some data augmentation
-
+'-----------------------------------------dataset--------------------------------------'
 class SequenceDataset(Dataset):
     """
     Dataset that generates sliding windows of fixed length (e.g., 30),
-    using the first (seq_len - 1) embeddings as input and the last as target.
+    splits each window into k parts, and for each part, uses the first (n-1)
+    embeddings as input and the last as the target.
     """
-    def __init__(self, embeddings: torch.Tensor, window_size: int = 30):
+    def __init__(self, embeddings: torch.Tensor, window_size: int = 30, splits: int = 3):
+        assert window_size % splits == 0, "Window size must be divisible by number of splits"
         self.embeds = embeddings
         self.window_size = window_size
+        self.split_size = window_size // splits
+        self.splits = splits
         self.num_windows = embeddings.size(0) - window_size + 1
 
     def __len__(self):
-        return self.num_windows
+        return self.num_windows * self.splits
 
     def __getitem__(self, idx):
-        window = self.embeds[idx : idx + self.window_size]
-        x = window[:-1]
-        y = window[-1]
+        window_idx = idx // self.splits
+        split_idx = idx % self.splits
+        window = self.embeds[window_idx : window_idx + self.window_size]
+        
+        part = window[split_idx * self.split_size : (split_idx + 1) * self.split_size]
+        x = part[:-1]
+        y = part[-1]
         return x, y
 
+'-------------------------------------model-definition---------------------------------'
 class PositionalEncoding(nn.Module):
     """
     Standard sine-cosine positional encoding.
@@ -87,8 +85,8 @@ class AutoregressiveTransformer(nn.Module):
     Simple autoregressive Transformer model to predict the next embedding.
     """
     def __init__(self, 
-                 embed_dim: int = 128, 
-                 nhead: int = 8, 
+                 embed_dim: int = 256, 
+                 nhead: int = 10, 
                  num_layers: int = 3,
                  dim_feedforward: int = 512, 
                  dropout: float = 0.1):
@@ -110,7 +108,7 @@ class AutoregressiveTransformer(nn.Module):
         last = encoded[-1] 
         return self.fc_out(last)
 
-
+'--------------------------------------model-trainer----------------------------------'
 def model_trainer(
     model: torch.nn.Module,
     train_loader: torch.utils.data.DataLoader,
@@ -211,6 +209,7 @@ def model_trainer(
 
     return train_losses, test_losses
 
+'--------------------------------------plotting---------------------------------------'
 def plot_losses(train_losses, test_losses):
     # Plot losses after training
     plt.figure(figsize=(10, 5))
@@ -224,14 +223,41 @@ def plot_losses(train_losses, test_losses):
     plt.savefig("losses.png")
     plt.show()
 
-if __name__ == "__main__":
+
+def main():
+
     window_size = 30
     seq_len = window_size - 1
     batch_size = 32
     lr = 1e-4
-    epochs = 200
+    epochs = 6
 
-    dataset = SequenceDataset(embeds, window_size)
+
+    csv_path = 'datasets/SODIndoorLoc-main/SYL/Training_SYL_All_30.csv'
+    df = pd.read_csv(csv_path)
+    mac_tensor, ts_tensor = signals_extractor(df)
+    embeds = embeddings_extractor(mac_tensor)
+
+
+    # Set the standard deviation of the noise (e.g., 0.1)
+    std_dev = 0.1
+
+    # Generate Gaussian noise and add it
+    noise = torch.randn_like(embeds) * std_dev
+    noisy_embedding = embeds + noise
+    combined_embeddings = torch.cat([embeds, noisy_embedding], dim=0)
+
+    # Optionally duplicate the timestamps if needed
+    combined_timestamps = torch.cat([ts_tensor, ts_tensor], dim=0)
+
+    embeds = combined_embeddings
+    ts_tensor = combined_timestamps
+
+
+
+
+
+    dataset = SequenceDataset(embeds, window_size=window_size, splits=5)
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
     model = AutoregressiveTransformer(embed_dim=embeds.size(1))
@@ -239,10 +265,10 @@ if __name__ == "__main__":
     criterion = nn.MSELoss()
 
     df_test = pd.read_csv('datasets/SODIndoorLoc-main/SYL/Testing_SYL_All.csv')
-    mac_tensor_test, ts_tensor_test = extract_mac_and_sample_time(df_test)
-    embeds_test = extract_embeddings(mac_tensor_test)
+    mac_tensor_test, ts_tensor_test = signals_extractor(df_test)
+    embeds_test = embeddings_extractor(mac_tensor_test)
 
-    dataset_test = SequenceDataset(embeds_test, window_size=10)
+    dataset_test = SequenceDataset(embeds_test, window_size=window_size, splits=3)
     loader_test = DataLoader(dataset_test, batch_size=batch_size, shuffle=False)
 
     train_losses, test_losses = model_trainer(
@@ -257,31 +283,7 @@ if __name__ == "__main__":
     print("Evaluation complete.")
 
     plot_losses(train_losses, test_losses)
-
     print('done')
 
-
-
-# divide the data so that you know which comes first and which comes second using the timestamp attribute
-
-# divide the data into training and test sets, remember that this is time series data, so you need to take care of the order
-
-# build the dataloaders for training and testing
-
-# create the embeddings using the convolutional block defined above
-
-# use convolutional block to learn the embeddings
-
-'''
-TO DO:
-
-the embeddings needs to be done with a CNN like your thesis
-
-create the signal embeddings, remember these are time series data, use
-sk-learn to check if you can split the data automatically for time series
-
-'''
-
-#JUST DO THE EMBEDDINGS AND DIVIDE THEM IN ORDER, THEN MERGE THEM TOGETHER (KINDA)
-# AND FINALLY GIVE IT AS INPUTS IN THE TRANSFORMER, CHECK THE PADDING AND MASKING
-# IF THEY HAVE TO BE OF THE SAME LENGTH OR NOT
+if __name__ == "__main__":
+    main()

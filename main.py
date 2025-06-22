@@ -293,7 +293,7 @@ def main():
     epochs = 6
     checkpoint_dir = "checkpoints"
 
-    Ipin2016Dataset = [
+    Ipin2016Dataset_raw = [
         'datasets/Ipin2016Dataset/measure1_smartphone_wifi.csv',
         'datasets/Ipin2016Dataset/measure2_smartphone_wifi.csv'
     ]
@@ -315,9 +315,10 @@ def main():
 
     datasets_path = {
         'train_path': 'datasets/SODIndoorLoc-main/SYL/Training_SYL_All_30.csv',
-        'test_path': 'datasets/SODIndoorLoc-main/SYL/Testing_SYL_All.csv'
+        'test_path': SODIndoorLoc_SYL[0]
     }
 
+    '-------------------------------train-data-------------------------------'
     train_df = pd.read_csv(datasets_path['train_path'])
     signals_tensor, train_ts_tensor = signals_extractor(train_df)
     train_embeds = embeddings_extractor(signals_tensor, n_components=370)
@@ -334,11 +335,7 @@ def main():
     train_dataset = SequenceDataset(train_embeds, window_size=window_size, splits=5)
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
 
-    embed_dim = train_embeds.size(1)
-    model = AutoregressiveTransformer(embed_dim=embed_dim)
-    optimizer = optim.Adam(model.parameters(), lr=lr)
-    criterion = nn.MSELoss()
-
+    '-------------------------------test-data-------------------------------'
     df_test = pd.read_csv(datasets_path['test_path'])
     signals_tensor_test, test_ts_tensor = signals_extractor(df_test)
     test_embeds = embeddings_extractor(signals_tensor_test, n_components=370)
@@ -346,10 +343,16 @@ def main():
     test_dataset = SequenceDataset(test_embeds, window_size=window_size, splits=3)
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 
+    '-------------------------------outlier-predictor-------------------------------'
+    embed_dim = train_embeds.size(1)
+    model = AutoregressiveTransformer(embed_dim=embed_dim)
+    optimizer = optim.Adam(model.parameters(), lr=lr)
+    criterion = nn.MSELoss()
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
-    training = True
+    training = False
     train_losses, test_losses = model_trainer(
         model=model,
         train_loader=train_loader,

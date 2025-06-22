@@ -213,7 +213,7 @@ def model_trainer(
     return train_losses, test_losses
 
 '--------------------------------------plotting---------------------------------------'
-def plot_losses(train_losses, test_losses):
+def plot_losses(train_losses, test_losses, train_path, test_path):
     plt.figure(figsize=(10, 5))
     plt.plot(train_losses, label='Train Loss', color='red')
     plt.plot(test_losses, label='Test Loss', color='blue')
@@ -222,9 +222,13 @@ def plot_losses(train_losses, test_losses):
     plt.title("Training vs Test Loss")
     plt.legend()
     plt.grid(True)
-    plt.savefig("losses.png")
+    
+    train_name = train_path.split('/')[-1]
+    test_name = test_path.split('/')[-1]
+    filename = f"loss_plot_{train_name}_vs_{test_name}.png"
+    
+    plt.savefig(filename)
     plt.show()
-
 '--------------------------------------prediction-------------------------------------'
 def predict_next_signal(model: torch.nn.Module, input_sequence: torch.Tensor, device: torch.device):
     """
@@ -289,7 +293,32 @@ def main():
     epochs = 6
     checkpoint_dir = "checkpoints"
 
-    train_df = pd.read_csv('datasets/SODIndoorLoc-main/SYL/Training_SYL_All_30.csv')
+    Ipin2016Dataset = [
+        'datasets/Ipin2016Dataset/measure1_smartphone_wifi.csv',
+        'datasets/Ipin2016Dataset/measure2_smartphone_wifi.csv'
+    ]
+
+    SODIndoorLoc_CETC331 = [
+        'datasets/SODIndoorLoc-main/CETC331/Testing_CETC331.csv',
+        'datasets/SODIndoorLoc-main/CETC331/Training_CETC331.csv'
+    ]
+
+    SODIndoorLoc_HCXY = [
+        'datasets/SODIndoorLoc-main/HCXY/Testing_HCXY_All.csv',
+        'datasets/SODIndoorLoc-main/HCXY/Training_HCXY_All_30.csv'
+    ]
+
+    SODIndoorLoc_SYL = [
+        'datasets/SODIndoorLoc-main/SYL/Testing_SYL_All.csv',
+        'datasets/SODIndoorLoc-main/SYL/Training_SYL_All_30.csv'
+    ]
+
+    datasets_path = {
+        'train_path': 'datasets/SODIndoorLoc-main/SYL/Training_SYL_All_30.csv',
+        'test_path': 'datasets/SODIndoorLoc-main/SYL/Testing_SYL_All.csv'
+    }
+
+    train_df = pd.read_csv(datasets_path['train_path'])
     signals_tensor, train_ts_tensor = signals_extractor(train_df)
     train_embeds = embeddings_extractor(signals_tensor, n_components=370)
 
@@ -310,17 +339,9 @@ def main():
     optimizer = optim.Adam(model.parameters(), lr=lr)
     criterion = nn.MSELoss()
 
-    df_test = pd.read_csv('datasets/SODIndoorLoc-main/SYL/Testing_SYL_All.csv')
+    df_test = pd.read_csv(datasets_path['test_path'])
     signals_tensor_test, test_ts_tensor = signals_extractor(df_test)
     test_embeds = embeddings_extractor(signals_tensor_test, n_components=370)
-
-    '''df_test = pd.read_csv('datasets/SODIndoorLoc-main/HCXY/Testing_HCXY_All.csv')
-    signals_tensor_test, test_ts_tensor = signals_extractor(df_test)
-    test_embeds = embeddings_extractor(signals_tensor_test, n_components=370)'''
-
-    '''df_test = pd.read_csv('datasets/SODIndoorLoc-main/SYL/Testing_SYL_AP.csv')
-    signals_tensor_test, test_ts_tensor = signals_extractor(df_test)
-    test_embeds = embeddings_extractor(signals_tensor_test, n_components=50)'''
 
     test_dataset = SequenceDataset(test_embeds, window_size=window_size, splits=3)
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
@@ -328,7 +349,7 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
-    training = False
+    training = True
     train_losses, test_losses = model_trainer(
         model=model,
         train_loader=train_loader,
@@ -343,9 +364,14 @@ def main():
     print("Training and evaluation complete.")
 
     if training:
-        plot_losses(train_losses, test_losses)
+        plot_losses(train_losses, 
+                    test_losses, 
+                    train_path=datasets_path['train_path'], 
+                    test_path=datasets_path['test_path'])
 
-    prediction_evaluation(model=model, test_dataset=test_dataset, device=device)
+    prediction_evaluation(model=model, 
+                          test_dataset=test_dataset, 
+                          device=device)
 
 if __name__ == "__main__":
     main()
@@ -354,4 +380,8 @@ if __name__ == "__main__":
     TO DO:
     - Do fine tuning to train the model with the other building data. If it is not possible retrain the model with the same architecture to check if it is general 
     - Do the evaluation for different test sets
+    - build a convolutional embedder for signals
+    - build a pipeline that run over all of the datasets
     '''
+
+    #training on another building

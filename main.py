@@ -10,13 +10,21 @@ import matplotlib.pyplot as plt
 import os
 
 '--------------------------------------pre-processing----------------------------------'
-def signals_extractor(df):
-    columns = df.columns[:-1]
-    vectors = df[columns].values
-    sample_times = df['SampleTimes'].values
-    signals_tensor = torch.tensor(vectors, dtype=torch.float32)
-    ts_tensor = torch.tensor(sample_times, dtype=torch.float32).squeeze()
-    return signals_tensor, ts_tensor
+def signals_extractor(df, dataset):
+    if dataset == 'SODIndoorLoc':
+        columns = df.columns[:-1]
+        vectors = df[columns].values
+        sample_times = df['SampleTimes'].values
+        signals_tensor = torch.tensor(vectors, dtype=torch.float32)
+        ts_tensor = torch.tensor(sample_times, dtype=torch.float32).squeeze()
+        return signals_tensor, ts_tensor
+    
+    if dataset == 'Ipin2016Dataset_raw':
+        timestamps = df.iloc[:, 0]
+        signals = df.iloc[:, 1:]
+        ts_tensor = torch.tensor(timestamps.values, dtype=torch.float32)
+        signals_tensor = torch.tensor(signals.values, dtype=torch.float32)
+        return signals_tensor, ts_tensor
 
 def embeddings_extractor(signals_tensor, n_components):
     """
@@ -292,6 +300,7 @@ def main():
     lr = 1e-4
     epochs = 6
     checkpoint_dir = "checkpoints"
+    dataset_name = 'SODIndoorLoc'
 
     Ipin2016Dataset_raw = [
         'datasets/Ipin2016Dataset/measure1_smartphone_wifi.csv',
@@ -308,38 +317,57 @@ def main():
         'datasets/SODIndoorLoc-main/HCXY/Training_HCXY_All_30.csv'
     ]
 
+    # this the baseline
     SODIndoorLoc_SYL = [
         'datasets/SODIndoorLoc-main/SYL/Testing_SYL_All.csv',
         'datasets/SODIndoorLoc-main/SYL/Training_SYL_All_30.csv'
     ]
 
-    datasets_path = {
-        'train_path': 'datasets/SODIndoorLoc-main/SYL/Training_SYL_All_30.csv',
-        'test_path': SODIndoorLoc_SYL[0]
-    }
 
-    '-------------------------------train-data-------------------------------'
-    train_df = pd.read_csv(datasets_path['train_path'])
-    signals_tensor, train_ts_tensor = signals_extractor(train_df)
-    train_embeds = embeddings_extractor(signals_tensor, n_components=370)
+    if dataset_name == 'SODIndoorLoc':
 
-    # adding some noise
-    std_dev = 0.1
-    noise = torch.randn_like(train_embeds) * std_dev
-    noisy_embedding = train_embeds + noise
-    combined_embeddings = torch.cat([train_embeds, noisy_embedding], dim=0)
-    combined_timestamps = torch.cat([train_ts_tensor, train_ts_tensor], dim=0)
-    train_embeds = combined_embeddings
-    train_ts_tensor = combined_timestamps
+        datasets_path = {
+            'train_path': SODIndoorLoc_SYL[1],
+            'test_path': SODIndoorLoc_SYL[0]
+        }
+
+        '-------------------------------train-data-------------------------------'
+        train_df = pd.read_csv(datasets_path['train_path'])
+        signals_tensor, train_ts_tensor = signals_extractor(train_df, dataset_name)
+        train_embeds = embeddings_extractor(signals_tensor, n_components=370)
+
+        # adding some noise
+        std_dev = 0.1
+        noise = torch.randn_like(train_embeds) * std_dev
+        noisy_embedding = train_embeds + noise
+        combined_embeddings = torch.cat([train_embeds, noisy_embedding], dim=0)
+        combined_timestamps = torch.cat([train_ts_tensor, train_ts_tensor], dim=0)
+        train_embeds = combined_embeddings
+        train_ts_tensor = combined_timestamps
+
+        '-------------------------------test-data-------------------------------'
+        df_test = pd.read_csv(datasets_path['test_path'])
+        signals_tensor_test, test_ts_tensor = signals_extractor(df_test, dataset_name)
+        test_embeds = embeddings_extractor(signals_tensor_test, n_components=370)
+
+    if dataset_name == 'Ipin2016Dataset_raw':
+
+        datasets_path = {
+            'train_path': Ipin2016Dataset_raw[0],
+            'test_path': Ipin2016Dataset_raw[0]
+        }
+
+        df = pd.read_csv(Ipin2016Dataset_raw[0])
+        signals_tensor, ts_tensor = signals_extractor(df, dataset_name)
+        train_signal_tensor = signals_tensor[:-121]
+        train_ts_tensor = ts_tensor[:-121]
+        test_signal_tensor = signals_tensor[-120:]
+        test_ts_tensor = ts_tensor[-120:]
+        train_embeds = embeddings_extractor(train_signal_tensor, n_components=120)
+        test_embeds = embeddings_extractor(test_signal_tensor, n_components=120)
 
     train_dataset = SequenceDataset(train_embeds, window_size=window_size, splits=5)
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-
-    '-------------------------------test-data-------------------------------'
-    df_test = pd.read_csv(datasets_path['test_path'])
-    signals_tensor_test, test_ts_tensor = signals_extractor(df_test)
-    test_embeds = embeddings_extractor(signals_tensor_test, n_components=370)
-
     test_dataset = SequenceDataset(test_embeds, window_size=window_size, splits=3)
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 
@@ -352,7 +380,7 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
-    training = False
+    training = True
     train_losses, test_losses = model_trainer(
         model=model,
         train_loader=train_loader,

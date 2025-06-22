@@ -300,7 +300,7 @@ def main():
     lr = 1e-4
     epochs = 6
     checkpoint_dir = "checkpoints"
-    dataset_name = 'SODIndoorLoc'
+    dataset_name = 'Ipin2016Dataset_raw'
 
     Ipin2016Dataset_raw = [
         'datasets/Ipin2016Dataset/measure1_smartphone_wifi.csv',

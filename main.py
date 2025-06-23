@@ -26,13 +26,40 @@ def signals_extractor(df, dataset):
         signals_tensor = torch.tensor(signals.values, dtype=torch.float32)
         return signals_tensor, ts_tensor
 
-def embeddings_extractor(signals_tensor, n_components):
+class CNNExtractor(nn.Module):
     """
-    Extract embeddings from the signals tensor using PCA.
+    CNN-based embedding extractor.
+    Takes signals as input and outputs fixed-size embeddings.
     """
-    pca = PCA(n_components=n_components)
-    signals_tensor = pca.fit_transform(signals_tensor)
-    return torch.tensor(signals_tensor, dtype=torch.float32)
+    def __init__(self, input_channels, output_dim):
+        super().__init__()
+        self.conv1 = nn.Conv1d(in_channels=input_channels, out_channels=64, kernel_size=3, padding=1)
+        self.bn1 = nn.BatchNorm1d(64)
+        self.conv2 = nn.Conv1d(in_channels=64, out_channels=128, kernel_size=3, padding=1)
+        self.bn2 = nn.BatchNorm1d(128)
+        self.pool = nn.AdaptiveAvgPool1d(1) # Global average pooling to get fixed-size output
+        self.fc = nn.Linear(128, output_dim)
+
+    def forward(self, x):
+        # x shape: (batch_size, sequence_length, features)
+        # Permute to (batch_size, features, sequence_length) for Conv1d
+        #x = x.permute(0, 2, 1) 
+        x = F.relu(self.bn1(self.conv1(x)))
+        x = F.relu(self.bn2(self.conv2(x)))
+        x = self.pool(x).squeeze(-1) # Output shape (batch_size, 128)
+        x = self.fc(x)
+        return x
+
+def embeddings_extractor_cnn(signals_tensor, cnn_model):
+    """
+    Extract embeddings from the signals tensor using a CNN model.
+    """
+    signals_tensor_reshaped = signals_tensor.unsqueeze(1) # Adds a channel dimension: (num_samples, 1, num_features)
+    
+    with torch.no_grad():
+        embeddings = cnn_model(signals_tensor_reshaped)
+    return embeddings
+
 
 '-----------------------------------------dataset--------------------------------------'
 class SequenceDataset(Dataset):
@@ -93,7 +120,7 @@ class AutoregressiveTransformer(nn.Module):
     """
     def __init__(self, 
                  embed_dim: int = 256, 
-                 nhead: int = 10, 
+                 nhead: int = 8, 
                  num_layers: int = 3,
                  dim_feedforward: int = 512, 
                  dropout: float = 0.1):
@@ -184,9 +211,9 @@ def model_trainer(
 
                 avg_test_loss = total_test_loss / n_test_samples
                 test_losses.append(avg_test_loss)
-                print(f"Epoch {epoch:02d}/{epochs}, Train Loss: {avg_train_loss:.4f}, Test Loss: {avg_test_loss:.4f}")
+                print(f"Epoch {epoch:02d}/{epochs}, Train Loss: {avg_train_loss:.6f}, Test Loss: {avg_test_loss:.6f}")
             else:
-                print(f"Epoch {epoch:02d}/{epochs}, Train Loss: {avg_train_loss:.4f}")
+                print(f"Epoch {epoch:02d}/{epochs}, Train Loss: {avg_train_loss:.6f}")
             
             if checkpoint_dir:
                 os.makedirs(checkpoint_dir, exist_ok=True)
@@ -296,11 +323,11 @@ def prediction_evaluation(model, test_dataset, device):
 def main():
     window_size = 30
     seq_len = window_size - 1
-    batch_size = 32
+    batch_size = 16
     lr = 1e-4
-    epochs = 6
+    epochs = 30
     checkpoint_dir = "checkpoints"
-    dataset_name = 'Ipin2016Dataset_raw'
+    dataset_name = 'SODIndoorLoc' # or 'SODIndoorLoc'
 
     Ipin2016Dataset_raw = [
         'datasets/Ipin2016Dataset/measure1_smartphone_wifi.csv',
@@ -323,62 +350,68 @@ def main():
         'datasets/SODIndoorLoc-main/SYL/Training_SYL_All_30.csv'
     ]
 
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {device}")
 
     if dataset_name == 'SODIndoorLoc':
-
         datasets_path = {
-            'train_path': SODIndoorLoc_SYL[1],
-            'test_path': SODIndoorLoc_SYL[0]
+            'train_path': SODIndoorLoc_HCXY[1],
+            'test_path': SODIndoorLoc_HCXY[0]
         }
-
-        '-------------------------------train-data-------------------------------'
         train_df = pd.read_csv(datasets_path['train_path'])
-        signals_tensor, train_ts_tensor = signals_extractor(train_df, dataset_name)
-        train_embeds = embeddings_extractor(signals_tensor, n_components=370)
+        signals_tensor_train_raw, train_ts_tensor = signals_extractor(train_df, dataset_name)
 
-        # adding some noise
-        std_dev = 0.1
+        df_test = pd.read_csv(datasets_path['test_path'])
+        signals_tensor_test_raw, test_ts_tensor = signals_extractor(df_test, dataset_name)
+
+        # Determine input_channels for CNN
+        input_channels_cnn = signals_tensor_train_raw.shape[1] # Number of features
+        # Define the output dimension of the CNN embeddings
+        cnn_embed_dim = 128 # You can tune this
+        cnn_extractor = CNNExtractor(input_channels=1, output_dim=cnn_embed_dim).to(device) # input_channels=1 because we unsqueeze
+        
+        # Extract embeddings using CNN
+        train_embeds = embeddings_extractor_cnn(signals_tensor_train_raw, cnn_extractor).to(device)
+        test_embeds = embeddings_extractor_cnn(signals_tensor_test_raw, cnn_extractor).to(device)
+
+        # Adding noise for SODIndoorLoc, if desired (now applied to the CNN embeddings)
+        '''std_dev = 0.1
         noise = torch.randn_like(train_embeds) * std_dev
         noisy_embedding = train_embeds + noise
-        combined_embeddings = torch.cat([train_embeds, noisy_embedding], dim=0)
-        combined_timestamps = torch.cat([train_ts_tensor, train_ts_tensor], dim=0)
-        train_embeds = combined_embeddings
-        train_ts_tensor = combined_timestamps
+        train_embeds = torch.cat([train_embeds, noisy_embedding], dim=0)'''
 
-        '-------------------------------test-data-------------------------------'
-        df_test = pd.read_csv(datasets_path['test_path'])
-        signals_tensor_test, test_ts_tensor = signals_extractor(df_test, dataset_name)
-        test_embeds = embeddings_extractor(signals_tensor_test, n_components=370)
-
-    if dataset_name == 'Ipin2016Dataset_raw':
-
+    elif dataset_name == 'Ipin2016Dataset_raw':
         datasets_path = {
             'train_path': Ipin2016Dataset_raw[0],
             'test_path': Ipin2016Dataset_raw[0]
         }
-
         df = pd.read_csv(Ipin2016Dataset_raw[0])
-        signals_tensor, ts_tensor = signals_extractor(df, dataset_name)
-        train_signal_tensor = signals_tensor[:-121]
-        train_ts_tensor = ts_tensor[:-121]
-        test_signal_tensor = signals_tensor[-120:]
-        test_ts_tensor = ts_tensor[-120:]
-        train_embeds = embeddings_extractor(train_signal_tensor, n_components=120)
-        test_embeds = embeddings_extractor(test_signal_tensor, n_components=120)
+        signals_tensor_raw, ts_tensor = signals_extractor(df, dataset_name)
+        
+        train_signal_tensor_raw = signals_tensor_raw[:-121]
+        test_signal_tensor_raw = signals_tensor_raw[-120:]
 
-    train_dataset = SequenceDataset(train_embeds, window_size=window_size, splits=5)
+        # Determine input_channels for CNN
+        input_channels_cnn = train_signal_tensor_raw.shape[1] # Number of features
+        # Define the output dimension of the CNN embeddings
+        cnn_embed_dim = 120 # Matching the original PCA output dimension for consistency in this example
+        cnn_extractor = CNNExtractor(input_channels=1, output_dim=cnn_embed_dim).to(device) # input_channels=1 because we unsqueeze
+        
+        # Extract embeddings using CNN
+        train_embeds = embeddings_extractor_cnn(train_signal_tensor_raw, cnn_extractor).to(device)
+        test_embeds = embeddings_extractor_cnn(test_signal_tensor_raw, cnn_extractor).to(device)
+
+    train_dataset = SequenceDataset(train_embeds, window_size=window_size, splits=2)
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-    test_dataset = SequenceDataset(test_embeds, window_size=window_size, splits=3)
+    test_dataset = SequenceDataset(test_embeds, window_size=window_size, splits=2)
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 
     '-------------------------------outlier-predictor-------------------------------'
-    embed_dim = train_embeds.size(1)
-    model = AutoregressiveTransformer(embed_dim=embed_dim)
+    # The embed_dim for the Transformer should now be the output dimension of the CNN
+    embed_dim = cnn_embed_dim 
+    model = AutoregressiveTransformer(embed_dim=embed_dim).to(device)
     optimizer = optim.Adam(model.parameters(), lr=lr)
     criterion = nn.MSELoss()
-
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Using device: {device}")
 
     training = True
     train_losses, test_losses = model_trainer(
@@ -404,15 +437,15 @@ def main():
                           test_dataset=test_dataset, 
                           device=device)
 
+
 if __name__ == "__main__":
     main()
 
     '''
     TO DO:
     - Do fine tuning to train the model with the other building data. If it is not possible retrain the model with the same architecture to check if it is general 
-    - Do the evaluation for different test sets
-    - build a convolutional embedder for signals
     - build a pipeline that run over all of the datasets
+    - take the best epoch not the 6th
     '''
 
     #training on another building

@@ -16,7 +16,7 @@ def main():
     lr = 1e-4
     epochs = 30
     checkpoint_dir = "checkpoints"
-    dataset_name = 'SODIndoorLoc' # or 'SODIndoorLoc'
+    dataset_name = 'Ipin2016Dataset_raw' # 'SODIndoorLoc' - 'Ipin2016Dataset_raw'
 
     Ipin2016Dataset_raw = [
         'raw_datasets/Ipin2016Dataset/measure1_smartphone_wifi.csv',
@@ -53,26 +53,17 @@ def main():
         df_test = pd.read_csv(datasets_path['test_path'])
         signals_tensor_test_raw, test_ts_tensor = signals_extractor(df_test, dataset_name)
 
-        # Determine input_channels for CNN
-        input_channels_cnn = signals_tensor_train_raw.shape[1] # Number of features
-        # Define the output dimension of the CNN embeddings
-        cnn_embed_dim = 128 # You can tune this
-        cnn_extractor = CNNExtractor(input_channels=1, output_dim=cnn_embed_dim).to(device) # input_channels=1 because we unsqueeze
-        
-        # Extract embeddings using CNN
+        input_channels_cnn = signals_tensor_train_raw.shape[1] 
+
+        cnn_embed_dim = 128 
+        cnn_extractor = CNNExtractor(input_channels=1, output_dim=cnn_embed_dim).to(device)   
         train_embeds = embeddings_extractor_cnn(signals_tensor_train_raw, cnn_extractor).to(device)
         test_embeds = embeddings_extractor_cnn(signals_tensor_test_raw, cnn_extractor).to(device)
 
-        # Adding noise for SODIndoorLoc, if desired (now applied to the CNN embeddings)
-        '''std_dev = 0.1
-        noise = torch.randn_like(train_embeds) * std_dev
-        noisy_embedding = train_embeds + noise
-        train_embeds = torch.cat([train_embeds, noisy_embedding], dim=0)'''
-
     elif dataset_name == 'Ipin2016Dataset_raw':
         datasets_path = {
-            'train_path': Ipin2016Dataset_raw[0],
-            'test_path': Ipin2016Dataset_raw[0]
+            'train_path': Ipin2016Dataset_raw[1],
+            'test_path': Ipin2016Dataset_raw[1]
         }
         df = pd.read_csv(Ipin2016Dataset_raw[0])
         signals_tensor_raw, ts_tensor = signals_extractor(df, dataset_name)
@@ -80,13 +71,10 @@ def main():
         train_signal_tensor_raw = signals_tensor_raw[:-121]
         test_signal_tensor_raw = signals_tensor_raw[-120:]
 
-        # Determine input_channels for CNN
-        input_channels_cnn = train_signal_tensor_raw.shape[1] # Number of features
-        # Define the output dimension of the CNN embeddings
-        cnn_embed_dim = 120 # Matching the original PCA output dimension for consistency in this example
-        cnn_extractor = CNNExtractor(input_channels=1, output_dim=cnn_embed_dim).to(device) # input_channels=1 because we unsqueeze
-        
-        # Extract embeddings using CNN
+        input_channels_cnn = train_signal_tensor_raw.shape[1]
+
+        cnn_embed_dim = 128
+        cnn_extractor = CNNExtractor(input_channels=1, output_dim=cnn_embed_dim).to(device) 
         train_embeds = embeddings_extractor_cnn(train_signal_tensor_raw, cnn_extractor).to(device)
         test_embeds = embeddings_extractor_cnn(test_signal_tensor_raw, cnn_extractor).to(device)
 
@@ -96,13 +84,12 @@ def main():
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 
     '-------------------------------outlier-predictor-------------------------------'
-    # The embed_dim for the Transformer should now be the output dimension of the CNN
     embed_dim = cnn_embed_dim
     model = AutoregressiveTransformer(embed_dim=embed_dim).to(device)
     optimizer = optim.Adam(model.parameters(), lr=lr)
     criterion = nn.MSELoss()
 
-    training = False
+    training = True
     train_losses, test_losses = model_trainer(
         model=model,
         train_loader=train_loader,

@@ -33,7 +33,7 @@ def main():
         'raw_datasets/SODIndoorLoc-main/HCXY/Training_HCXY_All_30.csv'
     ]
 
-    # this the baseline
+    # baseline
     SODIndoorLoc_SYL = [
         'raw_datasets/SODIndoorLoc-main/SYL/Testing_SYL_All.csv',
         'raw_datasets/SODIndoorLoc-main/SYL/Training_SYL_All_30.csv'
@@ -53,8 +53,6 @@ def main():
         df_test = pd.read_csv(datasets_path['test_path'])
         signals_tensor_test_raw, test_ts_tensor = signals_extractor(df_test, dataset_name)
 
-        input_channels_cnn = signals_tensor_train_raw.shape[1] 
-
         cnn_embed_dim = 128 
         cnn_extractor = CNNExtractor(input_channels=1, output_dim=cnn_embed_dim).to(device)   
         train_embeds = embeddings_extractor_cnn(signals_tensor_train_raw, cnn_extractor).to(device)
@@ -65,13 +63,11 @@ def main():
             'train_path': Ipin2016Dataset_raw[1],
             'test_path': Ipin2016Dataset_raw[1]
         }
-        df = pd.read_csv(Ipin2016Dataset_raw[0])
+        df = pd.read_csv(datasets_path['train_path'])
         signals_tensor_raw, ts_tensor = signals_extractor(df, dataset_name)
         
         train_signal_tensor_raw = signals_tensor_raw[:-121]
         test_signal_tensor_raw = signals_tensor_raw[-120:]
-
-        input_channels_cnn = train_signal_tensor_raw.shape[1]
 
         cnn_embed_dim = 128
         cnn_extractor = CNNExtractor(input_channels=1, output_dim=cnn_embed_dim).to(device) 
@@ -83,7 +79,7 @@ def main():
     test_dataset = SequenceDataset(test_embeds, window_size=window_size, splits=2)
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 
-    '-------------------------------outlier-predictor-------------------------------'
+    '-------------------------------signal-predictor-------------------------------'
     embed_dim = cnn_embed_dim
     model = AutoregressiveTransformer(embed_dim=embed_dim).to(device)
     optimizer = optim.Adam(model.parameters(), lr=lr)
@@ -116,12 +112,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-    '''
-    TO DO:
-    - Do fine tuning to train the model with the other building data. If it is not possible retrain the model with the same architecture to check if it is general 
-    - build a pipeline that run over all of the datasets
-    - save the checkpoints of the trained embeddings 
-    '''
-
-    #training on another building

@@ -3,7 +3,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
-from sklearn.decomposition import PCA
 from torch.utils.data import Dataset, DataLoader
 import torch.optim as optim
 import matplotlib.pyplot as plt
@@ -41,12 +40,9 @@ class CNNExtractor(nn.Module):
         self.fc = nn.Linear(128, output_dim)
 
     def forward(self, x):
-        # x shape: (batch_size, sequence_length, features)
-        # Permute to (batch_size, features, sequence_length) for Conv1d
-        #x = x.permute(0, 2, 1) 
         x = F.relu(self.bn1(self.conv1(x)))
         x = F.relu(self.bn2(self.conv2(x)))
-        x = self.pool(x).squeeze(-1) # Output shape (batch_size, 128)
+        x = self.pool(x).squeeze(-1)
         x = self.fc(x)
         return x
 
@@ -55,7 +51,6 @@ def embeddings_extractor_cnn(signals_tensor, cnn_model):
     Extract embeddings from the signals tensor using a CNN model.
     """
     signals_tensor_reshaped = signals_tensor.unsqueeze(1) # Adds a channel dimension: (num_samples, 1, num_features)
-    
     with torch.no_grad():
         embeddings = cnn_model(signals_tensor_reshaped)
     return embeddings
@@ -215,15 +210,18 @@ def model_trainer(
             else:
                 print(f"Epoch {epoch:02d}/{epochs}, Train Loss: {avg_train_loss:.6f}")
             
-            if checkpoint_dir:
-                os.makedirs(checkpoint_dir, exist_ok=True)
-                checkpoint_path = os.path.join(checkpoint_dir, f"model_epoch_{epoch:03d}.pth")
-                torch.save(model.state_dict(), checkpoint_path)
-                print(f"Checkpoint saved to {checkpoint_path}")
+            # Save only the best model based on test loss
+            if checkpoint_dir and test_loader is not None:
+                if epoch == 1 or avg_test_loss < best_test_loss:
+                    best_test_loss = avg_test_loss
+                    os.makedirs(checkpoint_dir, exist_ok=True)
+                    best_checkpoint_path = os.path.join(checkpoint_dir, "best_model.pth")
+                    torch.save(model.state_dict(), best_checkpoint_path)
+                    print(f"Best model updated and saved to {best_checkpoint_path}")
 
     else:
         print("Skipping training...")
-        model.load_state_dict(torch.load("checkpoints/model_epoch_006.pth"))
+        model.load_state_dict(torch.load("checkpoints/best_model.pth"))
         # Optional test loss evaluation after loading
         if test_loader is not None:
             model.eval()
@@ -355,8 +353,8 @@ def main():
 
     if dataset_name == 'SODIndoorLoc':
         datasets_path = {
-            'train_path': SODIndoorLoc_HCXY[1],
-            'test_path': SODIndoorLoc_HCXY[0]
+            'train_path': SODIndoorLoc_SYL[1],
+            'test_path': SODIndoorLoc_SYL[0]
         }
         train_df = pd.read_csv(datasets_path['train_path'])
         signals_tensor_train_raw, train_ts_tensor = signals_extractor(train_df, dataset_name)
@@ -445,7 +443,7 @@ if __name__ == "__main__":
     TO DO:
     - Do fine tuning to train the model with the other building data. If it is not possible retrain the model with the same architecture to check if it is general 
     - build a pipeline that run over all of the datasets
-    - take the best epoch not the 6th
+    - save the checkpoints of the trained embeddings 
     '''
 
     #training on another building

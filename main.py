@@ -258,7 +258,7 @@ def plot_losses(train_losses, test_losses, train_path, test_path):
     
     train_name = train_path.split('/')[-1]
     test_name = test_path.split('/')[-1]
-    filename = f"loss_plot_{train_name}_vs_{test_name}.png"
+    filename = f"pics/loss_plot_{train_name}_vs_{test_name}.png"
     
     plt.savefig(filename)
     plt.show()

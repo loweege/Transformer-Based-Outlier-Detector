@@ -4,7 +4,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 import torch.optim as optim
 
-from models import CNNExtractor, AutoregressiveTransformer, model_trainer
+from models import Convolutional_block, AutoregressiveTransformer, model_trainer
 from pre_processing import signals_extractor, embeddings_extractor_cnn
 from utils import plot_losses, prediction_evaluation
 from dataset import SequenceDataset
@@ -16,7 +16,7 @@ def main():
     lr = 1e-4
     epochs = 30
     checkpoint_dir = "checkpoints"
-    dataset_name = 'SODIndoorLoc' # 'SODIndoorLoc' - 'Ipin2016Dataset_raw'
+    dataset_name = 'Ipin2016Dataset_raw' # 'SODIndoorLoc' - 'Ipin2016Dataset_raw'
 
     Ipin2016Dataset_raw = [
         'raw_datasets/Ipin2016Dataset/measure1_smartphone_wifi.csv',
@@ -54,7 +54,7 @@ def main():
         signals_tensor_test_raw, test_ts_tensor = signals_extractor(df_test, dataset_name)
 
         cnn_embed_dim = 128 
-        cnn_extractor = CNNExtractor(input_channels=1, output_dim=cnn_embed_dim).to(device)   
+        cnn_extractor = Convolutional_block(input_channels=1, output_dim=cnn_embed_dim).to(device)   
         train_embeds = embeddings_extractor_cnn(signals_tensor_train_raw, cnn_extractor).to(device)
         test_embeds = embeddings_extractor_cnn(signals_tensor_test_raw, cnn_extractor).to(device)
 
@@ -70,7 +70,7 @@ def main():
         test_signal_tensor_raw = signals_tensor_raw[-120:]
 
         cnn_embed_dim = 128
-        cnn_extractor = CNNExtractor(input_channels=1, output_dim=cnn_embed_dim).to(device) 
+        cnn_extractor = Convolutional_block(input_channels=1, output_dim=cnn_embed_dim).to(device) 
         train_embeds = embeddings_extractor_cnn(train_signal_tensor_raw, cnn_extractor).to(device)
         test_embeds = embeddings_extractor_cnn(test_signal_tensor_raw, cnn_extractor).to(device)
 

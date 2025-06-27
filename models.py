@@ -4,7 +4,7 @@ import torch
 import os 
 
 '-------------------------------------embeddings-extractor---------------------------------'
-class CNNExtractor(nn.Module):
+class Convolutional_block(nn.Module):
     """
     CNN-based embedding extractor.
     Takes signals as input and outputs fixed-size embeddings.

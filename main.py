@@ -16,7 +16,7 @@ def main():
     lr = 1e-4
     epochs = 30
     checkpoint_dir = "checkpoints"
-    dataset_name = 'Ipin2016Dataset_raw' # 'SODIndoorLoc' - 'Ipin2016Dataset_raw'
+    dataset_name = 'SODIndoorLoc' # 'SODIndoorLoc' - 'Ipin2016Dataset_raw'
 
     Ipin2016Dataset_raw = [
         'raw_datasets/Ipin2016Dataset/measure1_smartphone_wifi.csv',
@@ -44,8 +44,8 @@ def main():
 
     if dataset_name == 'SODIndoorLoc':
         datasets_path = {
-            'train_path': SODIndoorLoc_SYL[1],
-            'test_path': SODIndoorLoc_SYL[0]
+            'train_path': SODIndoorLoc_CETC331[1],
+            'test_path': SODIndoorLoc_HCXY[0]
         }
         train_df = pd.read_csv(datasets_path['train_path'])
         signals_tensor_train_raw, train_ts_tensor = signals_extractor(train_df, dataset_name)
@@ -60,8 +60,8 @@ def main():
 
     elif dataset_name == 'Ipin2016Dataset_raw':
         datasets_path = {
-            'train_path': Ipin2016Dataset_raw[1],
-            'test_path': Ipin2016Dataset_raw[1]
+            'train_path': Ipin2016Dataset_raw[0],
+            'test_path': Ipin2016Dataset_raw[0]
         }
         df = pd.read_csv(datasets_path['train_path'])
         signals_tensor_raw, ts_tensor = signals_extractor(df, dataset_name)
